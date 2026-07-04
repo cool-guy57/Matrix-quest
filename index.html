@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>MatrixQuest: Hardened Core Engine</title>
+    <title>MatrixQuest: Unified Core Engine</title>
     <style>
         body {
             background-color: #0f111a;
@@ -213,7 +213,7 @@ class Monster {
         while (this.exp >= this.expNeeded) {
             this.level++; this.expNeeded = Math.pow(this.level, 3);
             const data = CORE_INDEX[this.species]; const oldMax = this.maxHp;
-            this.maxHp = Math.floor((data.baseHp * 2 * this.level) / 100) + this.level + 10; this.hp += (this.maxHp - oldMax);
+            const hpGain = Math.max(1, Math.floor(oldMax * 0.05)); this.maxHp = oldMax + hpGain; this.hp += hpGain;
             this.atk = Math.floor((data.baseAtk * 2 * this.level) / 100) + 5; this.def = Math.floor((data.baseDef * 2 * this.level) / 100) + 5;
             this.spd = Math.floor((data.baseSpd * 2 * this.level) / 100) + 5;
             logString += `\n${this.name} expanded to Level ${this.level}!`;
@@ -237,13 +237,19 @@ const Game = {
     battleSubState: "MAIN_MENU", keys: {}, inputLock: false,
     currentMapKey: "SECTOR_01", activeMap: null, dialogueQueue: [], currentSpeaker: "", activeInteractingNpc: null,
     playerParty: [], activePlayerMon: null, enemyMon: null, isBossBattle: false, activeBossSpecies: "",
-    inventory: { "Nano-Repair": 5, "Link Card": 3, "Decrypt Key": 0 }, linkDataFragments: 20, 
+    inventory: { "Nano-Repair": 5, "Link Card": 3, "Decrypt Key": 0, "Great Link": 0 }, linkDataFragments: 20, 
     tileSize: 32, playerGridPos: { x: 4, y: 5 }, pixelPos: { x: 4 * 32, y: 5 * 32 }, moveCooldown: 0, transitionTimer: 0,
     combatLogFeed: "",
 
     init() {
-        localStorage.removeItem("xenomon_save_profile");
-        this.initStarterSelectionScreen();
+        const hasSave = localStorage.getItem("xenomon_save_profile");
+        if (hasSave) {
+            this.loadProfileFromStorage(); this.gameState = "OVERWORLD";
+            this.activeMap = MAP_DIRECTORY[this.currentMapKey]; this.activePlayerMon = this.playerParty[0];
+            this.dialogue.innerText = "Systems linked. Welcome back to the grid.";
+        } else {
+            this.initStarterSelectionScreen();
+        }
 
         window.addEventListener("keydown", e => { 
             const blockedKeys = ["arrowup", "arrowdown", "arrowleft", "arrowright", " "];
@@ -274,17 +280,11 @@ const Game = {
         btn.onclick = () => {
             this.playerParty = [new Monster(speciesKey, 5)]; this.activePlayerMon = this.playerParty[0];
             this.activeMap = MAP_DIRECTORY[this.currentMapKey];
-            
-            // FIXED: Synchronous reset order stops render-stalls completely
             this.buttonsContainer.innerHTML = ""; 
             this.gameState = "OVERWORLD";
             this.dialogue.innerText = "Mainframe Active. Ready for command logs.";
-            
             SoundFX.play('levelUp'); 
             this.saveProfileToStorage();
-            
-            // ALERT BUFFER: Safely alerts user outside the canvas thread loop
-            alert(`Core compilation link built with [${speciesKey.toUpperCase()}] successfully.`);
         };
         this.buttonsContainer.appendChild(btn);
     },
@@ -295,23 +295,21 @@ const Game = {
             party: this.playerParty.map(mon => ({ species: mon.species, level: mon.level, hp: mon.hp, exp: mon.exp, moves: mon.moves }))
         };
         localStorage.setItem("xenomon_save_profile", JSON.stringify(saveState)); SoundFX.play('heal');
+        if (this.gameState === "OVERWORLD") this.triggerDialogue("SYSTEM CORE", ["SUCCESS: Profile metrics committed to physical hardware memory sector layout stack."]);
     },
 
     loadProfileFromStorage() {
         const raw = localStorage.getItem("xenomon_save_profile");
-        if (!raw) return false;
-        try {
-            const data = JSON.parse(raw);
-            if (!data.party || !data.party.length || !data.mapKey) return false;
-            this.currentMapKey = data.mapKey; this.playerGridPos = data.gridPos;
-            this.pixelPos = { x: data.gridPos.x * this.tileSize, y: data.gridPos.y * this.tileSize };
-            this.inventory = data.inventory; this.linkDataFragments = data.shards;
-            this.playerParty = data.party.map(pData => {
-                let m = new Monster(pData.species, pData.level); m.hp = pData.hp; m.exp = pData.exp; m.moves = pData.moves; return m;
-            });
-            return true;
-        } catch(e) { 
-            return false; 
+        if (raw) {
+            try {
+                const data = JSON.parse(raw);
+                this.currentMapKey = data.mapKey; this.playerGridPos = data.gridPos;
+                this.pixelPos = { x: data.gridPos.x * this.tileSize, y: data.gridPos.y * this.tileSize };
+                this.inventory = data.inventory; this.linkDataFragments = data.shards;
+                this.playerParty = data.party.map(pData => {
+                    let m = new Monster(pData.species, pData.level); m.hp = pData.hp; m.exp = pData.exp; m.moves = pData.moves; return m;
+                });
+            } catch(e) { console.error(e); this.playerParty = [new Monster("Voltsnap", 5)]; }
         }
     },
 
@@ -333,7 +331,7 @@ const Game = {
     },
 
     handleGridMovement() {
-        if (!this.activeMap) return; // Defensive guard layout protection
+        if (!this.activeMap) return; 
         const targetX = this.playerGridPos.x * this.tileSize; const targetY = this.playerGridPos.y * this.tileSize;
         if (this.pixelPos.x < targetX) this.pixelPos.x += 4; if (this.pixelPos.x > targetX) this.pixelPos.x -= 4;
         if (this.pixelPos.y < targetY) this.pixelPos.y += 4; if (this.pixelPos.y > targetY) this.pixelPos.y -= 4;
@@ -382,7 +380,16 @@ const Game = {
         this.saveProfileToStorage(); 
     },
     checkNPCInteraction() { if (!this.activeMap) return; if (this.currentMapKey === "SECTOR_01" && this.playerGridPos.y - 1 === 1 && this.playerGridPos.x === 8) { this.executeSanctuaryHeal(); return; } for (let npc of this.activeMap.npcs) { let dx = Math.abs(this.playerGridPos.x - npc.gridX); let dy = Math.abs(this.playerGridPos.y - npc.gridY); if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) { this.activeInteractingNpc = npc; this.triggerDialogue(npc.name, npc.lines); return; } } },
-    executeSanctuaryHeal() { SoundFX.play('heal'); this.playerParty.forEach(mon => mon.hp = mon.maxHp); this.triggerDialogue("SANCTUARY", ["CONNECTIONS STABLE... Squad sector allocations systematically refreshed."]); },
+    executeSanctuaryHeal() { 
+        if (this.playerParty.length === 0) { this.triggerDialogue("SANCTUARY", ["NO ACTIVE LINK TARGETS DETECTED."]); return; }
+        let totalMissingHp = 0;
+        this.playerParty.forEach(mon => { totalMissingHp += Math.max(0, mon.maxHp - mon.hp); });
+        if (this.linkDataFragments < totalMissingHp) { this.triggerDialogue("SANCTUARY", ["INSUFFICIENT FRAGMENTS FOR FULL RECOVERY.", `REQUIRES ${totalMissingHp}F TO RESTORE ALL HEALTH.`]); return; }
+        SoundFX.play('heal');
+        this.linkDataFragments -= totalMissingHp;
+        this.playerParty.forEach(mon => mon.hp = mon.maxHp);
+        this.triggerDialogue("SANCTUARY", ["CONNECTIONS STABLE... Squad sector allocations systematically refreshed.", `SPENT ${totalMissingHp}F TO RESTORE ALL HEALTH.`]);
+    },
     triggerDialogue(speakerName, textLinesArray) { this.gameState = "TEXT_BOX"; this.currentSpeaker = speakerName; this.dialogueQueue = [...textLinesArray]; this.buttonsContainer.innerHTML = ""; this.advanceDialogue(); },
     
     advanceDialogue() {
@@ -407,7 +414,7 @@ const Game = {
 
     openMerchantStoreMenu() {
         this.gameState = "SHOP_MENU"; this.dialogue.innerText = `[MERCHANT CONTROLLER] Shards: ${this.linkDataFragments}F.`; this.buttonsContainer.innerHTML = "";
-        this.createShopButton("BUY REPAIR SCRIPT (15F)", 15, "Nano-Repair"); this.createShopButton("BUY LINK ARRAY (25F)", 25, "Link Card");
+        this.createShopButton("BUY REPAIR SCRIPT (15F)", 15, "Nano-Repair"); this.createShopButton("BUY LINK ARRAY (25F)", 25, "Link Card"); this.createShopButton("BUY GREAT LINK (40F)", 40, "Great Link");
         const closeBtn = document.createElement("div"); closeBtn.className = "btn"; closeBtn.innerText = "DISCONNECT TERMINAL"; closeBtn.onclick = () => { this.activeInteractingNpc = null; this.gameState = "OVERWORLD"; }; this.buttonsContainer.appendChild(closeBtn);
     },
 
@@ -446,7 +453,7 @@ const Game = {
     },
 
     drawTilemap() {
-        if (!this.activeMap) return; // CRITICAL RACE CONDITION REPAIR GUARD
+        if (!this.activeMap) return; 
         const layout = this.activeMap.layout;
         this.ctx.fillStyle = this.activeMap.groundColor; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.strokeStyle = "rgba(0, 255, 204, 0.04)";
@@ -537,10 +544,11 @@ const Game = {
     },
 
     drawUIStatusBlock(mon, x, y, width) {
-        this.ctx.fillStyle = "#0d0f18"; this.ctx.strokeStyle = mon.isOverclocked ? "#ff3333" : "#00ffcc"; this.ctx.lineWidth = 2; this.ctx.fillRect(x, y, width, 60); this.ctx.strokeRect(x, y, width, 60); this.ctx.fillStyle = "#fff"; this.ctx.font = "bold 11px Courier New"; this.ctx.textAlign = "left";
+        this.ctx.fillStyle = "#0d0f18"; this.ctx.strokeStyle = mon.isOverclocked ? "#ff3333" : "#00ffcc"; this.ctx.lineWidth = 2; this.ctx.fillRect(x, y, width, 76); this.ctx.strokeRect(x, y, width, 76); this.ctx.fillStyle = "#fff"; this.ctx.font = "bold 11px Courier New"; this.ctx.textAlign = "left";
         let label = mon.isOverclocked ? `[OVERCLOCK] ${mon.name}` : mon.name; this.ctx.fillText(label.toUpperCase(), x + 10, y + 20); this.ctx.fillText(`Lv${mon.level}`, x + width - 45, y + 20);
         this.ctx.fillStyle = "#1b1f35"; this.ctx.fillRect(x + 10, y + 28, width - 20, 8); let ratio = Math.max(0, mon.hp / mon.maxHp); this.ctx.fillStyle = ratio > 0.5 ? "#00ffcc" : ratio > 0.2 ? "#ff9e64" : "#f7768e"; this.ctx.fillRect(x + 10, y + 28, (width - 20) * ratio, 8);
-        this.ctx.fillStyle = "#a9b1d6"; this.ctx.font = "10px Courier New"; this.ctx.fillText(`${mon.hp}/${mon.maxHp} HP [${mon.type}]`, x + 10, y + 48);
+        let expRatio = Math.max(0, Math.min(1, mon.exp / mon.expNeeded)); this.ctx.fillStyle = "#1b1f35"; this.ctx.fillRect(x + 10, y + 44, width - 20, 6); this.ctx.fillStyle = "#ffd166"; this.ctx.fillRect(x + 10, y + 44, (width - 20) * expRatio, 6);
+        this.ctx.fillStyle = "#a9b1d6"; this.ctx.font = "10px Courier New"; this.ctx.fillText(`${mon.hp}/${mon.maxHp} HP [${mon.type}]`, x + 10, y + 60); this.ctx.fillText(`EXP ${mon.exp}/${mon.expNeeded}`, x + 10, y + 70);
     },
 
     initBattleUI() {
@@ -552,15 +560,21 @@ const Game = {
             this.activePlayerMon.moves.forEach(mKey => { const move = MOVES[mKey]; this.createMenuButton(`${move.name} [${move.type}]`, () => this.executeActionTurnStack({ type: 'MOVE', object: move })); });
             this.createMenuButton("<< CANCEL", () => { this.battleSubState = "MAIN_MENU"; this.initBattleUI(); });
         } else if (this.battleSubState === "BAG") {
-            Object.keys(this.inventory).forEach(itemKey => { let count = this.inventory[itemKey]; if (count > 0 && itemKey !== "Decrypt Key") { this.createMenuButton(`${itemKey} (${count})`, () => { if (itemKey === "Link Card") this.executeActionTurnStack({ type: 'CAPTURE', name: itemKey }); else this.executeActionTurnStack({ type: 'ITEM', name: itemKey }); }); } });
+            Object.keys(this.inventory).forEach(itemKey => { let count = this.inventory[itemKey]; if (count > 0 && itemKey !== "Decrypt Key") { this.createMenuButton(`${itemKey} (${count})`, () => { if (itemKey === "Link Card" || itemKey === "Great Link") this.executeActionTurnStack({ type: 'CAPTURE', name: itemKey }); else this.executeActionTurnStack({ type: 'ITEM', name: itemKey }); }); } });
             this.createMenuButton("<< CANCEL", () => { this.battleSubState = "MAIN_MENU"; this.initBattleUI(); });
         } else if (this.battleSubState === "PARTY") {
-            this.playerParty.forEach((mon, index) => { let statusLabel = mon === this.activePlayerMon ? "[ACTIVE]" : `(${mon.hp}/${mon.maxHp} HP)`; this.createMenuButton(`${mon.name} Lv${mon.level} ${statusLabel}`, () => { if (mon === this.activePlayerMon || mon.hp <= 0) return; this.executeActionTurnStack({ type: 'SWAP', index: index }); }); });
+            this.playerParty.forEach((mon, index) => { let statusLabel = mon === this.activePlayerMon ? "[ACTIVE]" : `(${mon.hp}/${mon.maxHp} HP)`; this.createPartyRosterButton(mon, index, statusLabel, () => { if (mon === this.activePlayerMon || mon.hp <= 0) return; this.executeActionTurnStack({ type: 'SWAP', index: index }); }); });
             this.createMenuButton("<< CANCEL", () => { this.battleSubState = "MAIN_MENU"; this.initBattleUI(); });
         }
     },
 
     createMenuButton(text, callback) { const btn = document.createElement("div"); btn.className = "btn"; btn.innerText = text; btn.onclick = () => { if (!this.inputLock) callback(); }; this.buttonsContainer.appendChild(btn); },
+    createPartyRosterButton(mon, index, statusLabel, callback) { const btn = document.createElement("div"); btn.className = "btn"; btn.onclick = () => { if (!this.inputLock) callback(); };
+        const title = document.createElement("div"); title.innerText = `${mon.name} Lv${mon.level} ${statusLabel}`;
+        const barTrack = document.createElement("div"); barTrack.style.marginTop = "6px"; barTrack.style.height = "6px"; barTrack.style.background = "#1b1f35"; barTrack.style.position = "relative";
+        const barFill = document.createElement("div"); const expRatio = Math.max(0, Math.min(1, mon.exp / mon.expNeeded)); barFill.style.height = "100%"; barFill.style.width = `${expRatio * 100}%`; barFill.style.background = "#ffd166";
+        const barLabel = document.createElement("div"); barLabel.style.marginTop = "2px"; barLabel.style.fontSize = "9px"; barLabel.style.color = "#a9b1d6"; barLabel.innerText = `EXP ${mon.exp}/${mon.expNeeded}`;
+        barTrack.appendChild(barFill); btn.appendChild(title); btn.appendChild(barTrack); btn.appendChild(barLabel); this.buttonsContainer.appendChild(btn); },
     executeActionTurnStack(playerAction) { this.inputLock = true; this.buttonsContainer.innerHTML = ""; const enemyMoveKey = this.enemyMon.moves[Math.floor(Math.random() * this.enemyMon.moves.length)]; const enemyAction = { type: 'MOVE', object: MOVES[enemyMoveKey] }; let queue = []; if (playerAction.type === 'ITEM' || playerAction.type === 'CAPTURE' || playerAction.type === 'SWAP' || playerAction.type === 'RUN') { queue = [{ entity: this.activePlayerMon, target: this.enemyMon, action: playerAction }, { entity: this.enemyMon, target: this.activePlayerMon, action: enemyAction }]; } else { if (this.activePlayerMon.spd >= this.enemyMon.spd) { queue = [{ entity: this.activePlayerMon, target: this.enemyMon, action: playerAction }, { entity: this.enemyMon, target: this.activePlayerMon, action: enemyAction }]; } else { queue = [{ entity: this.enemyMon, target: this.activePlayerMon, action: enemyAction }, { entity: this.activePlayerMon, target: this.enemyMon, action: playerAction }]; } } this.processQueueStep(queue, 0); },
 
     processQueueStep(queue, index) {
@@ -569,7 +583,7 @@ const Game = {
         if (step.action.type === 'RUN') { this.terminateBattleScene(); }
         else if (step.action.type === 'SWAP') { this.activePlayerMon = this.playerParty[step.action.index]; this.combatLogFeed = `Signature swap execution. Appending: ${this.activePlayerMon.name}!`; this.dialogue.innerText = this.combatLogFeed; setTimeout(() => this.processQueueStep(queue, index + 1), 1400); }
         else if (step.action.type === 'ITEM') { this.inventory[step.action.name]--; this.activePlayerMon.hp = Math.min(this.activePlayerMon.maxHp, this.activePlayerMon.hp + 25); this.combatLogFeed = `Nano-Repair sequence initialized. +25 HP committed to ${this.activePlayerMon.name}.`; this.dialogue.innerText = this.combatLogFeed; setTimeout(() => this.processQueueStep(queue, index + 1), 1400); } 
-        else if (step.action.type === 'CAPTURE') { this.inventory[step.action.name]--; if (this.isBossBattle) { this.combatLogFeed = `COMPILING FAILED: HOST NODE SECURITY LOCK ACTIVE. LINK INITIALIZATION UNRECOGNIZED.`; this.dialogue.innerText = this.combatLogFeed; setTimeout(() => this.processQueueStep(queue, index + 1), 1400); return; } let caught = Math.random() * 255 < ((3 * this.enemyMon.maxHp - 2 * this.enemyMon.hp) * this.enemyMon.syncRate) / (3 * this.enemyMon.maxHp); if (caught) { this.combatLogFeed = `Core parsed cleanly! Linked ${this.enemyMon.name} variables to stack layout.`; this.dialogue.innerText = this.combatLogFeed; this.playerParty.push(this.enemyMon); this.saveProfileToStorage(); setTimeout(() => this.terminateBattleScene(), 1600); } else { this.combatLogFeed = `Link configuration package collision error. Anomaly structural boundaries retained.`; this.dialogue.innerText = this.combatLogFeed; setTimeout(() => this.processQueueStep(queue, index + 1), 1400); } }
+        else if (step.action.type === 'CAPTURE') { this.inventory[step.action.name]--; if (this.isBossBattle) { this.combatLogFeed = `COMPILING FAILED: HOST NODE SECURITY LOCK ACTIVE. LINK INITIALIZATION UNRECOGNIZED.`; this.dialogue.innerText = this.combatLogFeed; setTimeout(() => this.processQueueStep(queue, index + 1), 1400); return; } let caught = step.action.name === 'Great Link' ? this.enemyMon.hp < 26 : Math.random() * 255 < ((3 * this.enemyMon.maxHp - 2 * this.enemyMon.hp) * this.enemyMon.syncRate) / (3 * this.enemyMon.maxHp); if (caught) { this.combatLogFeed = step.action.name === 'Great Link' ? `Great Link engaged! ${this.enemyMon.name} was below the threshold and linked.` : `Core parsed cleanly! Linked ${this.enemyMon.name} variables to stack layout.`; this.dialogue.innerText = this.combatLogFeed; this.enemyMon.hp = this.enemyMon.maxHp; this.playerParty.push(this.enemyMon); this.saveProfileToStorage(); setTimeout(() => this.terminateBattleScene(), 1600); } else { this.combatLogFeed = step.action.name === 'Great Link' ? `Great Link threshold not met. ${this.enemyMon.name} resisted the link.` : `Link configuration package collision error. Anomaly structural boundaries retained.`; this.dialogue.innerText = this.combatLogFeed; setTimeout(() => this.processQueueStep(queue, index + 1), 1400); } }
         else if (step.action.type === 'MOVE') { 
             let move = step.action.object; let result = this.evaluateDamageCalculation(step.entity, step.target, move); 
             if (move.drains) { 
@@ -612,7 +626,7 @@ const Game = {
         }
     },
 
-    processMatchFailure() { this.dialogue.innerText = "Stack overflow fatal warning! Connection arrays completely shattered."; this.playerParty.forEach(m => m.hp = m.maxHp); this.activePlayerMon = this.playerParty[0]; this.playerGridPos = { x: 4, y: 5 }; this.pixelPos = { x: 4 * 32, y: 5 * 32 }; this.terminateBattleScene(); },
+    processMatchFailure() { this.dialogue.innerText = "Stack overflow fatal warning! Connection arrays completely shattered."; this.playerParty = []; this.activePlayerMon = null; this.enemyMon = null; this.isBossBattle = false; this.activeBossSpecies = ""; this.inventory = { "Nano-Repair": 5, "Link Card": 3, "Decrypt Key": 0, "Great Link": 0 }; this.linkDataFragments = 20; this.currentMapKey = "SECTOR_01"; this.activeMap = null; this.playerGridPos = { x: 4, y: 5 }; this.pixelPos = { x: 4 * 32, y: 5 * 32 }; this.ui.style.display = "grid"; this.inputLock = false; localStorage.removeItem("xenomon_save_profile"); this.initStarterSelectionScreen(); },
     terminateBattleScene() { this.gameState = "OVERWORLD"; this.ui.style.display = "grid"; this.inputLock = false; this.enemyMon = null; this.isBossBattle = false; this.activeBossSpecies = ""; this.render(); },
 
     drawSelectionBackgroundLayout() {
